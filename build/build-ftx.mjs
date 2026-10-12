@@ -1,0 +1,21 @@
+import { spawnSync } from 'node:child_process';
+import { readdir, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
+
+const compiler = process.env.EMCC || 'emcc';
+const version = spawnSync(compiler, ['--version'], { encoding: 'utf8' });
+if (version.error || version.status !== 0) throw new Error('Install Emscripten 6.0.12 and set EMCC to its emcc executable to rebuild wasm/ftx.wasm. The prebuilt binary is used by ordinary npm builds.');
+if (!version.stdout.includes('6.0.12')) throw new Error('For reproducible builds, use the pinned Emscripten 6.0.12 compiler.');
+const sources = ['wasm/ftx-bridge.c', 'vendor/ft8_lib/common/monitor.c', 'vendor/ft8_lib/fft/kiss_fft.c', 'vendor/ft8_lib/fft/kiss_fftr.c'];
+for (const name of (await readdir('vendor/ft8_lib/ft8')).sort()) if (name.endsWith('.c')) sources.push(`vendor/ft8_lib/ft8/${name}`);
+await mkdir('wasm', { recursive: true });
+const exported = ['_malloc', '_free', '_rd_reset', '_rd_encode', '_rd_synthesize', '_rd_decode', '_rd_result_text', '_rd_result_frequency', '_rd_result_time', '_rd_result_score'];
+const args = [...sources, '-O3', '-Ivendor/ft8_lib', '-DHAVE_STPCPY', '-DLOG_PRINTF(...)=((void)0)', '-sSTANDALONE_WASM=1', '--no-entry', '-sFILESYSTEM=0', '-sALLOW_MEMORY_GROWTH=1', '-sSTACK_SIZE=1048576', '-sINITIAL_MEMORY=16777216', '-sMAXIMUM_MEMORY=67108864', `-sEXPORTED_FUNCTIONS=${JSON.stringify(exported)}`, '-o', resolve('wasm/ftx.wasm')];
+const result = spawnSync(compiler, args, { stdio: 'inherit' });
+if (result.error || result.status !== 0) throw new Error('FT8/FT4 WebAssembly compilation failed.');
+const digest = data => createHash('sha256').update(data).digest('hex');
+const sourceSha256 = {};
+for (const path of ['wasm/ftx-bridge.c', ...await Promise.all(['ft8', 'common', 'fft'].map(async directory => (await readdir(`vendor/ft8_lib/${directory}`)).sort().filter(name => /\.[ch]$/.test(name)).map(name => `vendor/ft8_lib/${directory}/${name}`))).then(groups => groups.flat())]) sourceSha256[path] = digest(await readFile(path));
+await writeFile('wasm/ftx-build.json', JSON.stringify({ compiler: 'Emscripten 6.0.12', upstreamCommit: '9fec6ca39886edbf96f4f5e71edc76da5074e871', wasmSha256: digest(await readFile('wasm/ftx.wasm')), sourceSha256 }, null, 2) + '\n');
+console.log('Built wasm/ftx.wasm with Emscripten 6.0.12 and pinned ft8_lib sources.');

@@ -1,0 +1,15 @@
+import { build } from 'esbuild';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+const decoder = await build({ entryPoints: ['src/digital/decoder-worker.ts'], bundle: true, write: false, format: 'iife', target: 'es2022', minify: true });
+const sdr = await build({ entryPoints: ['src/sdr/worker-entry.ts'], bundle: true, write: false, format: 'iife', target: 'es2022', minify: true });
+const wasm = await readFile('wasm/ftx.wasm');
+const ftx = await build({ entryPoints: ['src/digital/ftx/worker.ts'], bundle: true, write: false, format: 'iife', target: 'es2022', minify: true, define:{__RADIODESK_FTX_WASM__:JSON.stringify(wasm.toString('base64'))} });
+const bundle = await build({ entryPoints: ['src/main.ts'], bundle: true, write: false, format: 'iife', target: 'es2022', minify: true, legalComments: 'inline', define:{__RADIO_DESK_DECODER_WORKER__:JSON.stringify(decoder.outputFiles[0].text),__RADIO_DESK_SDR_WORKER__:JSON.stringify(sdr.outputFiles[0].text),__RADIODESK_FTX_WORKER__:JSON.stringify(ftx.outputFiles[0].text)} });
+const css = await readFile('src/ui/styles.css', 'utf8');
+const script = bundle.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
+const notices = await Promise.all(['LICENSE','vendor/ft8_lib/LICENSE','vendor/ft8_lib/fft/LICENSE-BSD-3-Clause','wasm/LICENSE-Emscripten','wasm/LICENSE-musl','wasm/LICENSE-math'].map(async path=>`${path}\n${await readFile(path,'utf8')}`));
+const licenseComment=notices.join('\n\n').replaceAll('--','—');
+const html = `<!doctype html>\n<html lang="en"><head><!-- RadioDesk | Source and dependency license notices\n${licenseComment}\n-->\n<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101315"><meta name="description" content="RadioDesk: an offline amateur radio station, SDR and signal laboratory, FT8/FT4 modem, RF workbench and local logbook."><title>RadioDesk · Amateur radio workspace</title><style>${css}</style></head><body><div id="app"></div><script>${script}</script></body></html>`;
+await mkdir('dist', { recursive: true });
+await writeFile('dist/radiodesk.html', html);
+console.log(`RadioDesk built: dist/radiodesk.html (${(Buffer.byteLength(html)/1024).toFixed(1)} KiB). No external runtime assets.`);
