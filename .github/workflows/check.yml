@@ -17,12 +17,19 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
-      - name: Install Hamlib for Dummy backend integration
-        run: sudo apt-get update && sudo apt-get install -y libhamlib-utils
+      - name: Build verified Hamlib 4.7.2 for Dummy integration
+        run: |
+          curl -fsSL https://github.com/Hamlib/Hamlib/releases/download/4.7.2/hamlib-4.7.2.tar.gz -o "$RUNNER_TEMP/hamlib-4.7.2.tar.gz"
+          printf 'ae1fcf2dbc80ea0786ea8f047b09399c3f7737d1930442f61a031708ed33e88f  %s\n' "$RUNNER_TEMP/hamlib-4.7.2.tar.gz" > "$RUNNER_TEMP/hamlib.sha256"
+          sha256sum --check "$RUNNER_TEMP/hamlib.sha256"
+          tar -xzf "$RUNNER_TEMP/hamlib-4.7.2.tar.gz" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/hamlib-4.7.2"
+          ./configure --disable-shared --without-libusb > configure.log 2>&1 || { tail -80 configure.log; exit 1; }
+          make -j2 > build.log 2>&1 || { tail -80 build.log; exit 1; }
       - run: npm ci
       - run: npm run check
         env:
-          RADIODESK_HAMLIB_TEST_BINARY: rigctld
+          RADIODESK_HAMLIB_TEST_BINARY: ${{ runner.temp }}/hamlib-4.7.2/tests/rigctld
       - uses: actions/upload-artifact@v4
         with:
           name: radiodesk-standalone

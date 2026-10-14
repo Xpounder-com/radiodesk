@@ -21,7 +21,7 @@ npm run dev
 
 Open **http://127.0.0.1:4173**. This launcher rebuilds the same HTML on page load. It is for local preview; offline tools do not depend on a running server.
 
-For radios supported by Hamlib, use the [local bridge helper](https://github.com/Xpounder-com/radiodesk/releases/latest/download/hamlib_ws.py), install Hamlib separately, select the exact model with `rigctld -l`, and start its daemon bound to loopback:
+For radios supported by Hamlib, use the [local bridge helper](https://github.com/Xpounder-com/radiodesk/releases/latest/download/hamlib_ws.py), install the verified Hamlib 4.7.2 separately, select the exact model with `rigctld -l`, and start its daemon bound to loopback:
 
 ```sh
 rigctld -m YOUR_MODEL_ID -r YOUR_CAT_DEVICE -P RIG -C cache_timeout=0 -T 127.0.0.1 -t 4532
@@ -89,7 +89,7 @@ Tests include RF reference circuits, numerical geometry, audio/IQ FFTs and compi
 
 Browser checks exercised the eight-workspace build, independent FT8 and official FT4 recorded PCM imports, a silent one-shot FT4 simulator send ending in confirmed RX/disarmed state, and a synthetic IQ peak at centre +20 kHz with no local sample drops during that check. Desktop and narrow viewport checks found no horizontal overflow. These results do not establish physical radio or sound-interface behavior.
 
-CI also installs Hamlib and runs its actual in-memory Dummy backend. To run that integration locally, set `RADIODESK_HAMLIB_TEST_BINARY` to your installed `rigctld` executable before `npm run check`; it always selects Dummy model 1 and never opens a radio port. Without that variable, only this optional native integration is skipped.
+CI builds the official, checksum-pinned Hamlib 4.7.2 release and runs its actual in-memory Dummy backend. Older OS packages may lack the required runtime safety queries and leave controls disabled. To run that integration locally, set `RADIODESK_HAMLIB_TEST_BINARY` to your installed `rigctld` executable before `npm run check`; it always selects Dummy model 1 and never opens a radio port. Without that variable, only this optional native integration is skipped.
 
 Useful separate commands are `npm run test:bridge`, `npm run verify` after a build, and `npm run build:ftx` to rebuild the modem with the documented Emscripten toolchain. See [architecture](docs/architecture.md) and [FTX build provenance](docs/ftx.md).
 

@@ -6,7 +6,7 @@ The bridge starts with transmit disabled. A configured model and successful read
 
 ## Start the local services
 
-Install Hamlib for your operating system, then use `rigctld --list` to find the model supported by your installed version. Configure the correct CAT device, baud rate, framing, radio menus, and PTT route using Hamlib's instructions and your radio's manual. Replace `MODEL_ID`, `RADIO_CAT_DEVICE`, and `CAT_BAUD` below with those values:
+Use **Hamlib 4.7.2** for the verified integration, available from its [official releases](https://github.com/Hamlib/Hamlib/releases/tag/4.7.2). Ubuntu’s 4.5.5 package failed the required runtime capability gate in CI. Older daemons that cannot supply these checks remain read only, with tuning/PTT disabled rather than implying confirmed receive. Newer versions must retain the documented protocol and runtime checks. Install Hamlib for your operating system, then use `rigctld --list` to find the model supported by your installed version. Configure the correct CAT device, baud rate, framing, radio menus, and PTT route using Hamlib's instructions and your radio's manual. Replace `MODEL_ID`, `RADIO_CAT_DEVICE`, and `CAT_BAUD` below with those values:
 
 ```sh
 rigctld -m MODEL_ID -r RADIO_CAT_DEVICE -s CAT_BAUD -P RIG -C cache_timeout=0 -T 127.0.0.1 -t 4532

@@ -4,7 +4,7 @@ Verified locally on 2026-10-13. Direct reference targets are the Yaesu FT-891 an
 
 ## Automated checks
 
-`npm run check` passed strict TypeScript, **203 Node tests with no skips**, the single HTML build, and the artifact gate. The bridge runners executed seven RTL-SDR and forty Hamlib Python tests, plus one actual native Hamlib Dummy integration. CI installs Hamlib and enables the native integration with `RADIODESK_HAMLIB_TEST_BINARY`; local runs without that variable skip only the optional native test.
+`npm run check` passed strict TypeScript, **203 Node tests with no skips**, the single HTML build, and the artifact gate. The bridge runners executed seven RTL-SDR and forty Hamlib Python tests, plus one actual native Hamlib Dummy integration. CI builds the checksum-pinned official Hamlib 4.7.2 release and enables the native integration with `RADIODESK_HAMLIB_TEST_BINARY`; local runs without that variable skip only the optional native test.
 
 The artifact gate compares all three embedded workers with their actual compiled sources, verifies exact FT8/FT4 WASM bytes and provenance hash, requires eight implemented workspaces, and checks complete dependency notices inside the document head. The release contains one inline script and stylesheet, no external runtime assets and an empty application root.
 
