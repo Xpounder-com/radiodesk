@@ -21,6 +21,15 @@ npm run dev
 
 Open **http://127.0.0.1:4173**. This launcher rebuilds the same HTML on page load. It is for local preview; offline tools do not depend on a running server.
 
+For radios supported by Hamlib, use the [local bridge helper](https://github.com/Xpounder-com/radiodesk/releases/latest/download/hamlib_ws.py), install Hamlib separately, select the exact model with `rigctld -l`, and start its daemon bound to loopback:
+
+```sh
+rigctld -m YOUR_MODEL_ID -r YOUR_CAT_DEVICE -P RIG -C cache_timeout=0 -T 127.0.0.1 -t 4532
+python3 bridge/hamlib_ws.py
+```
+
+Choose **Connect radio → Hamlib · local radio bridge** and paste the token-bearing endpoint printed by the bridge. It discovers the configured backend, modes and controls; unsupported controls remain disabled. Hamlib model selection is not automatic physical-radio identification. The bridge defaults to receive control; transmit additionally requires `--allow-transmit`, supported PTT readback and a separate operator arm. See [Hamlib setup and compatibility](docs/hamlib.md) for serial settings, dummy-radio testing, exact origins, browser restrictions and release behavior. The application remains one HTML file; Hamlib and the optional Python helper run locally beside it.
+
 For actual RTL-SDR hardware, start the optional native receiver adapter:
 
 ```sh
@@ -36,24 +45,24 @@ For the hosted app, explicitly allow its origin when starting your local bridge:
 
 | Workspace | Implemented functionality |
 | --- | --- |
-| Station | VFO, FT-891 CAT identity/frequency/mode/TX readbacks, step tuning, memories, labelled simulator, quick logging, explicitly armed bounded hold-to-transmit and emergency RX |
+| Station | VFO, direct FT-891 identity and configured Hamlib model/capability discovery, frequency/mode/PTT readbacks, step tuning, memories, labelled simulator, quick logging, explicitly armed bounded hold-to-transmit and emergency RX |
 | Signal Lab | Mono audio FFT and waterfall, live receiver/microphone audio, filters, WAV playback/recording, CW and ITA2/RTTY encoding, practice waveforms, controlled WAV decoding and separately armed one-shot audio sends |
 | SDR | Real rtl_tcp IQ protocol over WebSocket, fragmented-header/sample handling, requested tune/rate/gain controls, full complex RF FFT/waterfall, local AM/FM/USB/LSB listening, stereo IQ WAV/raw imports and visible sample-drop counters |
 | FT8 / FT4 | Embedded C/WASM message packing, CRC/LDPC encoding and receive decoding, UTC-slot capture from receiver audio or SDR, independent recorded-file compatibility, editable reply composition, slot WAV export and one explicitly scheduled send |
 | Engineering | Antenna dimensions, Smith chart, complex reflection/VSWR, return/mismatch loss, loss-aware line transforms, L matching, Butterworth low/high/bandpass ladders and responses, cable loss and unit/resonance tools |
 | Logbook | Local contacts, search, UTC/reports/grids, ADIF import/export, duplicate prevention, recoverable deletion, JSON backup and merging |
 | Propagation | Embedded Natural Earth land map, Maidenhead conversion, short/long great-circle paths and bearings, UTC solar position, night shading, terminator and twilight boundaries |
-| Devices | Permission-aware audio/serial inventory, explicit device selection, FT-891 model checks, connection settings, lifecycle/status and selected radio audio output |
+| Devices | Permission-aware audio/serial inventory, explicit device selection, FT-891 identity checks, Hamlib capability discovery, connection settings, lifecycle/status and selected radio audio output |
 
 ## Transmit and hardware status
 
-Guarded **FT-891 CAT PTT is implemented**. An operator must explicitly arm the current frequency/mode, select and verify the radio audio route, confirm an antenna or dummy load and an independent radio transmit failsafe, and choose a bounded duration. The app pins the armed state, obtains fresh readbacks before keying, and revokes scopes when a send is canceled. Manual PTT is a hold action. Digital scheduling sends one prepared waveform once; it does not automatically reply or repeat a slot. Changing workspaces stops transmit output and disarms. Hidden-page/blur events, missed timing and clock changes also cancel applicable sends. Failed release/readback reports **RX unconfirmed**.
+Guarded **FT-891 CAT PTT and capability-gated Hamlib PTT are implemented**. An operator must explicitly arm the current frequency/mode, select and verify the radio audio route, confirm an antenna or dummy load and an independent radio transmit failsafe, and choose a bounded duration. The app pins the armed state, obtains fresh readbacks before keying, and revokes scopes when a send is canceled. Manual PTT is a hold action. Digital scheduling sends one prepared waveform once; it does not automatically reply or repeat a slot. Changing workspaces stops transmit output and disarms. Hidden-page/blur events, missed timing and clock changes also cancel applicable sends. Failed release/readback reports **RX unconfirmed**.
 
 The browser cannot guarantee RF shutdown after a crash, suspended process, unplugged interface or operating-system failure. The physical radio timeout/interlock and an independent stop remain necessary. The simulator exercises the control path without RF output. Details and bench procedures are in [transmit.md](docs/transmit.md) and [hardware.md](docs/hardware.md).
 
-Signal Lab also sends generated CW/RTTY audio once after deliberate arming in Signal Lab’s transmit panel, through the selected radio output in confirmed DATA-USB. These are audio modulation, not hardware CW-keyer or FSK-keying support. Long audio is rejected if it cannot fit the armed maximum.
+Signal Lab also sends generated CW/RTTY audio once after deliberate arming in Signal Lab’s transmit panel, through the selected radio output in a confirmed, driver-supported audio mode (DATA-USB for the direct FT-891; available DATA-USB or USB through Hamlib). These are audio modulation, not hardware CW-keyer or FSK-keying support. Long audio is rejected if it cannot fit the armed maximum.
 
-**The FT-891 and RTL-SDR hardware targets remain physically unverified in this project.** Protocol fixtures, worker execution, timing tests and recorded PCM establish the tested software paths; they do not establish measured radio tuning, RF release, USB/sound-card behavior, modem sensitivity or on-air transmit timing.
+**All physical hardware integrations, including FT-891, RTL-SDR and Hamlib models, remain physically unverified in this project.** Protocol fixtures, worker execution, timing tests and recorded PCM establish the tested software paths; they do not establish measured radio tuning, RF release, USB/sound-card behavior, modem sensitivity or on-air transmit timing.
 
 ## Measurement and modem limits
 
@@ -74,16 +83,18 @@ npm ci
 npm run check
 ```
 
-`check` runs strict TypeScript and behavioral/reference tests (including seven Python bridge tests), builds the HTML and verifies its actual contents. The artifact gate checks eight navigation/render cases, all three independently compiled worker scripts, exact modem WASM bytes/hash, complete license notices, inline-only runtime assets and an empty application root before user data loads.
+`check` runs strict TypeScript and behavioral/reference tests (including both Python bridge suites), builds the HTML and verifies its actual contents. The artifact gate checks eight navigation/render cases, all three independently compiled worker scripts, exact modem WASM bytes/hash, complete license notices, inline-only runtime assets and an empty application root before user data loads.
 
 Tests include RF reference circuits, numerical geometry, audio/IQ FFTs and compiled-worker execution, WAV/IQ parsing, CW/RTTY codecs, FT8/FT4 protocol vectors and independently recorded receive PCM, serial identity/framing/readbacks/timeouts, guarded PTT and cancel/deadline races, bridge origin/token/frame boundaries, and concurrent contact persistence. These are distinct from browser and physical-device validation; exercise the generated artifact, permissions, source changes, listening, downloads and bounded send behavior before a hardware release.
 
 Browser checks exercised the eight-workspace build, independent FT8 and official FT4 recorded PCM imports, a silent one-shot FT4 simulator send ending in confirmed RX/disarmed state, and a synthetic IQ peak at centre +20 kHz with no local sample drops during that check. Desktop and narrow viewport checks found no horizontal overflow. These results do not establish physical radio or sound-interface behavior.
 
+CI also installs Hamlib and runs its actual in-memory Dummy backend. To run that integration locally, set `RADIODESK_HAMLIB_TEST_BINARY` to your installed `rigctld` executable before `npm run check`; it always selects Dummy model 1 and never opens a radio port. Without that variable, only this optional native integration is skipped.
+
 Useful separate commands are `npm run test:bridge`, `npm run verify` after a build, and `npm run build:ftx` to rebuild the modem with the documented Emscripten toolchain. See [architecture](docs/architecture.md) and [FTX build provenance](docs/ftx.md).
 
 ## Contribute and license
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md), [SDR](docs/sdr.md), [FT8/FT4](docs/ftx.md), [transmit](docs/transmit.md), [signals](docs/signals.md) and [engineering](docs/engineering.md). Preserve the single-file build, source labels, explicit control paths and inspectable test evidence. Additional named radios/modems, rotators, calibrated instruments, propagation models and electromagnetic solvers can extend these boundaries.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md), [SDR](docs/sdr.md), [Hamlib](docs/hamlib.md), [FT8/FT4](docs/ftx.md), [transmit](docs/transmit.md), [signals](docs/signals.md) and [engineering](docs/engineering.md). Preserve the single-file build, source labels, explicit control paths and inspectable test evidence. Additional named radios/modems, rotators, calibrated instruments, propagation models and electromagnetic solvers can extend these boundaries.
 
-RadioDesk application and original bridge code use [MIT](LICENSE). The embedded `ft8_lib` is MIT, KISS FFT is BSD-3-Clause, and Emscripten/musl/math notices are retained in source and in the HTML. Natural Earth data is public domain. Optional native Osmocom `rtl-sdr` keeps its own GPL license and is not copied into the client. The independent WSJT-X test recording has separate upstream provenance and a retained GPL notice; it is excluded from the HTML. See [FTX provenance](docs/ftx.md), [fixture provenance](vendor/ft8_lib/UPSTREAM.md) and [map provenance](docs/source-data.md).
+RadioDesk application and original bridge code use [MIT](LICENSE). The embedded `ft8_lib` is MIT, KISS FFT is BSD-3-Clause, and Emscripten/musl/math notices are retained in source and in the HTML. Natural Earth data is public domain. Optional native Osmocom `rtl-sdr` and Hamlib retain their own licenses and are not copied into the client or original MIT bridge. Hamlib is installed separately; no Hamlib source or binary is embedded in the HTML. The independent WSJT-X test recording has separate upstream provenance and a retained GPL notice; it is excluded from the HTML. See [FTX provenance](docs/ftx.md), [fixture provenance](vendor/ft8_lib/UPSTREAM.md) and [map provenance](docs/source-data.md).

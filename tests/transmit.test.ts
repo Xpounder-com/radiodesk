@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RadioController, type RadioTransmitPermit } from '../src/radio/controller.ts';
+import { RadioController, type RadioTransmitPermit, type RadioState } from '../src/radio/controller.ts';
 import { CATSession, type CATTransmitScope } from '../src/radio/session.ts';
 import { FT891Driver } from '../src/radio/ft891.ts';
 import { parseFT891TransmitStatus } from '../src/radio/protocol.ts';
 import { TransmitController, type ArmRequest } from '../src/transmit/controller.ts';
 import type { SerialApiLike, SerialPortLike } from '../src/devices/types.ts';
 import type { CATTransport } from '../src/devices/serial.ts';
+import type { HamlibSocket } from '../src/radio/hamlib.ts';
 
 class Clock {
   mono = 0;
@@ -79,6 +80,195 @@ async function hardware(options: { clock?: Clock; timeoutMs?: number; port?: Rig
   const tx = new TransmitController(radio, { clock: () => clock.mono, wallClock: () => clock.utc, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, window: windowTarget, document: documentTarget });
   return { radio, tx, port, clock, windowTarget, documentTarget };
 }
+
+/** A non-Yaesu driver contract fixture; no serial, WebSocket, audio or RF hardware is opened. */
+class GenericRig {
+  state: RadioState = { connected: true, verified: true, frequency: 14_074_000, mode: 'USB', ptt: false, txStatus: 'rx', driver: 'Hamlib', model: 'Icom IC-7300', identitySource: 'hamlib-configured' };
+  capabilities = { frequency: true, mode: true, ptt: true, pttReadback: true, receiveOnly: false, simulated: false, modes: ['USB', 'LSB', 'DATA-USB'], digitalModes: ['USB', 'DATA-USB'], minFrequency: 30_000, maxFrequency: 74_800_000 };
+  listeners = new Set<(state: RadioState) => void>();
+  permits = new Map<RadioTransmitPermit, () => boolean>();
+  permitDurations: number[] = [];
+  permitKeyBoundaries: Array<number | undefined> = [];
+  refreshes = 0;
+  keys = 0;
+  releases = 0;
+  getState(): RadioState { return { ...this.state }; }
+  getCapabilities() { return { ...this.capabilities, modes: [...this.capabilities.modes], digitalModes: [...this.capabilities.digitalModes] }; }
+  subscribe(listener: (state: RadioState) => void): () => void { this.listeners.add(listener); listener(this.getState()); return () => this.listeners.delete(listener); }
+  emit(): void { for (const listener of this.listeners) listener(this.getState()); }
+  async refresh(): Promise<RadioState> { this.refreshes++; this.emit(); return this.getState(); }
+  acquireTransmitPermit(current: () => boolean, maximumSeconds: number, keyBeforeUtcMs?: number): RadioTransmitPermit { const permit = { kind: 'radiodesk-operator-transmit' } as const; this.permits.set(permit, current); this.permitDurations.push(maximumSeconds); this.permitKeyBoundaries.push(keyBeforeUtcMs); return permit; }
+  revokeTransmitPermit(permit: RadioTransmitPermit): void { this.permits.delete(permit); }
+  async setPtt(active: boolean, permit: RadioTransmitPermit): Promise<void> { if (!this.permits.get(permit)?.()) throw new Error('Expired generic driver permit.'); this.keys++; this.state.ptt = active; this.state.txStatus = active ? 'cat-tx' : 'rx'; this.emit(); }
+  async emergencyReceive(): Promise<void> { this.releases++; this.state.ptt = false; this.state.txStatus = 'rx'; this.emit(); }
+  async readTransmitStatus() { return this.state.txStatus; }
+}
+
+function genericHardware() {
+  const rig = new GenericRig(), clock = new Clock();
+  const tx = new TransmitController(rig as unknown as RadioController, { clock: () => clock.mono, wallClock: () => clock.utc, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  return { rig, clock, tx };
+}
+
+class DeferredHamlibSocket extends EventTarget implements HamlibSocket {
+  readyState = 1;
+  bufferedAmount = 0;
+  ptt = false;
+  commands: Array<Record<string, any>> = [];
+  pendingKey: Record<string, any> | undefined;
+  send(data: string): void {
+    const request = JSON.parse(data); this.commands.push(request);
+    const reply = (result: unknown) => queueMicrotask(() => this.respond(request.id, result));
+    if (request.op === 'hello') reply({ protocol: 'radiodesk-hamlib-v1', name: 'Icom IC-7300 fixture', configuredModelName: 'IC-7300', model: '3073', identitySource: 'hamlib-configured', capabilities: { frequency: true, mode: true, ptt: true, pttReadback: true, splitReadback: true, receiveOnly: false, simulated: false, modes: ['USB', 'DATA-USB'], digitalModes: ['USB', 'DATA-USB'], minFrequency: 30_000, maxFrequency: 74_800_000, pttRoute: 'RIG', pttRouteVerified: true, cacheTimeoutMs: 0, freshReadback: true }, snapshot: this.snapshot() });
+    else if (request.op === 'read') reply(this.snapshot());
+    else if (request.op === 'ptt') { this.ptt = true; this.pendingKey = request; }
+    else if (request.op === 'release') { this.ptt = false; reply('rx'); }
+    else if (request.op === 'heartbeat') reply({ alive: true });
+    else throw new Error(`Unexpected synthetic Hamlib request ${request.op}`);
+  }
+  private snapshot() { return { frequency: 14_074_000, mode: 'USB', ptt: this.ptt, txStatus: this.ptt ? 'cat-tx' : 'rx', split: false }; }
+  respond(id: number, result: unknown): void { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ id, ok: true, result }) })); }
+  close(): void { this.readyState = 3; this.dispatchEvent(new Event('close')); }
+}
+
+test('late Hamlib PTT acknowledgement after operator release cannot replace confirmed receive or relatch transmit', async () => {
+  const socket = new DeferredHamlibSocket(), radio = new RadioController({ pollIntervalMs: 0, webSocketFactory: () => socket });
+  await radio.connectHamlib('ws://127.0.0.1:8766/radio?token=abcdefghijklmnop');
+  const clock = new Clock(), tx = new TransmitController(radio, { clock: () => clock.mono, wallClock: () => clock.utc, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  try {
+    await tx.arm(request('USB')); const holding = tx.holdPTT(); await flush();
+    assert.ok(socket.pendingKey, 'the JSON PTT request has reached the synthetic backend');
+    assert.equal(tx.getState().status, 'pending');
+    await tx.releasePTT(); assert.equal(tx.getState().rxConfirmed, true); assert.equal(radio.getState().txStatus, 'rx');
+    socket.respond(socket.pendingKey!.id, 'cat-tx'); await holding; await flush();
+    assert.equal(radio.getState().txStatus, 'rx'); assert.equal(radio.getState().ptt, false);
+    assert.equal(tx.getState().status, 'armed'); assert.equal(tx.getState().rxConfirmed, true);
+    assert.equal(socket.commands.filter(command => command.op === 'ptt').length, 1);
+  } finally { await tx.dispose(); await radio.disconnect(); }
+});
+
+test('a pending Hamlib scheduled key is canceled before the audio boundary even while its acknowledgement is delayed', async () => {
+  const socket = new DeferredHamlibSocket(), radio = new RadioController({ pollIntervalMs: 0, webSocketFactory: () => socket });
+  await radio.connectHamlib('ws://127.0.0.1:8766/radio?token=abcdefghijklmnop');
+  const clock = new Clock(), tx = new TransmitController(radio, { clock: () => clock.mono, wallClock: () => clock.utc, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout });
+  let audioStarts = 0;
+  try {
+    await tx.arm(request('USB')); await tx.scheduleOnce({ id: 'slow-key', startAtUtcMs: clock.utc + 2000, durationMs: 500, startAudio() { audioStarts++; }, stopAudio() {} });
+    await clock.advance(1650); assert.ok(socket.pendingKey); assert.equal(tx.getState().status, 'pending');
+    await clock.advance(275); assert.equal(tx.getState().armed, false); assert.equal(radio.getState().txStatus, 'rx');
+    assert.match(tx.getState().error!, /key deadline/); assert.equal(socket.commands.some(command => command.op === 'release'), true);
+    socket.respond(socket.pendingKey!.id, 'cat-tx'); await flush(); await clock.advance(1000);
+    assert.equal(audioStarts, 0); assert.equal(radio.getState().txStatus, 'rx'); assert.equal(tx.getState().armed, false);
+  } finally { await tx.dispose(); await radio.disconnect(); }
+});
+
+test('an old scheduled key completion cannot cancel a newer schedule deadline after rearming', async () => {
+  const h = genericHardware(), completions: Array<() => void> = [];
+  h.rig.setPtt = async () => { h.rig.keys++; await new Promise<void>(resolve => completions.push(resolve)); };
+  let audioStarts = 0;
+  const plan = () => ({ id: 'rearmed-key', startAtUtcMs: h.clock.utc + 2000, durationMs: 500, startAudio() { audioStarts++; }, stopAudio() {} });
+  try {
+    await h.tx.arm(request('USB')); await h.tx.scheduleOnce(plan()); await h.clock.advance(1650);
+    await h.clock.advance(275); assert.equal(h.tx.getState().armed, false);
+    await h.tx.arm(request('USB')); await h.tx.scheduleOnce(plan()); await h.clock.advance(1650);
+    assert.equal(h.tx.getState().status, 'pending'); assert.equal(completions.length, 2);
+    completions[0](); await flush();
+    await h.clock.advance(275); assert.equal(h.tx.getState().armed, false); assert.match(h.tx.getState().error!, /key deadline/);
+    completions[1](); await flush(); await h.clock.advance(1000);
+    assert.equal(audioStarts, 0); assert.equal(h.rig.state.txStatus, 'rx');
+  } finally { await h.tx.dispose(); }
+});
+
+test('generic non-FT891 driver arms from current readbacks and forwards the configured permit duration', async () => {
+  const h = genericHardware();
+  try {
+    await h.tx.arm(request('USB', 20));
+    assert.equal(h.rig.refreshes, 1);
+    assert.equal(h.tx.getState().armed, true);
+    assert.equal(h.tx.getState().simulated, false);
+    assert.equal(h.rig.keys, 0, 'arming does not key a generic driver');
+    await h.tx.holdPTT();
+    assert.deepEqual(h.rig.permitDurations, [20]);
+    assert.deepEqual(h.rig.permitKeyBoundaries, [undefined], 'manual holds do not carry a scheduled key boundary');
+    assert.equal(h.tx.getState().status, 'transmitting');
+    await h.tx.releasePTT();
+    assert.equal(h.rig.state.txStatus, 'rx');
+    assert.equal(h.tx.getState().rxConfirmed, true);
+  } finally { await h.tx.dispose(); }
+});
+
+test('a fractional transmit lease is rejected before a generic bridge can be armed', async () => {
+  const h = genericHardware();
+  try { await assert.rejects(h.tx.arm(request('USB', 1.5)), /whole number between 1 and 30/); assert.equal(h.rig.refreshes, 0); assert.equal(h.rig.keys, 0); }
+  finally { await h.tx.dispose(); }
+});
+
+test('generic drivers without PTT control or transmit readback cannot arm', async () => {
+  for (const capability of ['ptt', 'pttReadback'] as const) {
+    const h = genericHardware(); h.rig.capabilities[capability] = false;
+    try { await assert.rejects(h.tx.arm(request('USB')), /PTT control and transmit-state readback/); assert.equal(h.rig.refreshes, 0); assert.equal(h.rig.keys, 0); }
+    finally { await h.tx.dispose(); }
+  }
+});
+
+test('generic arming rejects unknown transmit state, external transmit, and failed current readback', async () => {
+  for (const state of [{ txStatus: 'unknown' }, { txStatus: 'external-tx', ptt: true }, { verified: false }, { connected: false }] as Array<Partial<RadioState>>) {
+    const h = genericHardware(); Object.assign(h.rig.state, state);
+    try { await assert.rejects(h.tx.arm(request('USB')), /receive|connected radio/); assert.equal(h.tx.getState().armed, false); assert.equal(h.rig.keys, 0); }
+    finally { await h.tx.dispose(); }
+  }
+});
+
+test('Hamlib USB digital scheduling uses advertised modes and preserves one-shot ordering', async () => {
+  const h = genericHardware(), actions: Array<[string, number]> = [];
+  const startAtUtcMs = h.clock.utc + 2000;
+  try {
+    await h.tx.arm(request('USB'));
+    await h.tx.scheduleOnce({ id: 'generic-usb', startAtUtcMs, durationMs: 500, startAudio: () => { actions.push(['start', h.clock.mono]); }, stopAudio: () => { actions.push(['stop', h.clock.mono]); } });
+    await h.clock.advance(1650); assert.equal(h.rig.keys, 1); assert.equal(actions.length, 0);
+    assert.deepEqual(h.rig.permitKeyBoundaries, [startAtUtcMs - 75]);
+    await h.clock.advance(350); assert.deepEqual(actions[0], ['start', 2000]);
+    await h.clock.advance(650); assert.deepEqual(actions[1], ['stop', 2650]); assert.equal(h.rig.state.txStatus, 'rx'); assert.equal(h.tx.getState().armed, false);
+    await h.clock.advance(20_000); assert.equal(h.rig.keys, 1);
+  } finally { await h.tx.dispose(); }
+});
+
+test('generic scheduling rejects an unsupported audio mode before acquiring a transmit permit', async () => {
+  const h = genericHardware(); h.rig.state.mode = 'LSB';
+  try {
+    await h.tx.arm(request('LSB'));
+    await assert.rejects(h.tx.scheduleOnce({ id: 'unsupported', startAtUtcMs: h.clock.utc + 2000, durationMs: 100, startAudio() {}, stopAudio() {} }), /DATA-USB.*USB|USB.*DATA-USB/);
+    assert.equal(h.rig.keys, 0); assert.deepEqual(h.rig.permitDurations, []);
+  } finally { await h.tx.dispose(); }
+});
+
+test('generic model replacement or loss of PTT readback immediately revokes an existing arm', async () => {
+  for (const change of ['model', 'pttReadback'] as const) {
+    const h = genericHardware();
+    try {
+      await h.tx.arm(request('USB'));
+      if (change === 'model') h.rig.state.model = 'Different rig'; else h.rig.capabilities.pttReadback = false;
+      h.rig.emit(); await flush(); assert.equal(h.tx.getState().armed, false); assert.equal(h.rig.keys, 0);
+    } finally { await h.tx.dispose(); }
+  }
+});
+
+test('a Hamlib dummy driver derives simulation from capabilities and stays eligible for silent timing tests', async () => {
+  const h = genericHardware(); h.rig.state.model = 'Dummy'; h.rig.state.verified = false; h.rig.capabilities.simulated = true;
+  try { await h.tx.arm(request('USB')); assert.equal(h.tx.getState().simulated, true); assert.equal(h.rig.keys, 0); }
+  finally { await h.tx.dispose(); }
+});
+
+test('split-aware generic arming requires simplex and split changes revoke an existing arm', async () => {
+  const h = genericHardware(); Object.assign(h.rig.capabilities, { splitReadback: true });
+  try {
+    h.rig.state.split = true; await assert.rejects(h.tx.arm(request('USB')), /Confirm simplex/);
+    h.rig.state.split = null; await assert.rejects(h.tx.arm(request('USB')), /Confirm simplex/);
+    h.rig.state.split = false; await h.tx.arm(request('USB')); assert.equal(h.tx.getState().armed, true);
+    h.rig.state.split = true; h.rig.emit(); await flush();
+    assert.equal(h.tx.getState().armed, false); assert.equal(h.rig.keys, 0);
+  } finally { await h.tx.dispose(); }
+});
 
 test('official FT-891 TX0/TX1/TX2 answers distinguish RX, CAT TX, and external TX', () => {
   assert.equal(parseFT891TransmitStatus('TX0;'), 'rx');

@@ -1,12 +1,7 @@
 import { CATSession, type CATCommands, type CATTransmitScope } from './session.ts';
 import { encodeFT891Frequency, encodeFT891Mode, parseFT891Frequency, parseFT891Mode, parseFT891ModeCode, parseFT891TransmitStatus, type FT891TransmitStatus } from './protocol.ts';
-
-export interface RadioSnapshot {
-  frequency: number;
-  mode: string;
-  ptt: boolean;
-  txStatus: FT891TransmitStatus;
-}
+import type { RadioSnapshot } from './driver.ts';
+export type { RadioSnapshot } from './driver.ts';
 
 async function readMode(commands: CATCommands): Promise<string> {
   const frame = await commands.query('MD0;', (reply) => /^MD0[1-9BCD];$/.test(reply));

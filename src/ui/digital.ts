@@ -63,7 +63,7 @@ export function renderDigital(): string {
         <p class="footnote">Phase-continuous audio FSK: one start bit, five bits LSB first, 1.5 stop bits. WAV decode uses fixed baud and tones; validate against clean recordings. National ITA2 symbols are excluded.</p>
       </div>
     </section>
-    <div class="note full">CW and RTTY generate audio and decode WAV recordings with the selected settings. Sending audio requires the transmit arm above and DATA-USB on a physical FT-891; audio CW does not operate the CW keyer and audio RTTY does not use the FSK input. FT8 / FT4 has its own workspace.</div>
+    <div class="note full">CW and RTTY generate audio and decode WAV recordings with the selected settings. Sending audio requires the transmit arm above and a confirmed audio mode supported by the connected radio driver; audio CW does not operate the CW keyer and audio RTTY does not use the FSK input. FT8 / FT4 has its own workspace.</div>
   </div>`;
 }
 

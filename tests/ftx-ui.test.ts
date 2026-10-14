@@ -40,13 +40,17 @@ async function setup() {
     scheduleOnce: async (plan: any) => { scheduled.push(plan); state = { ...state, status: 'scheduled', source: 'scheduled', scheduledAtUtcMs: plan.startAtUtcMs }; emit(); },
     emergencyStop: async () => setArmed(false), disarm: async () => setArmed(false),
   } as unknown as TransmitController;
-  const radio = { getState: () => ({ frequency: 14074000, mode: 'DATA-USB' }) } as unknown as RadioController;
+  const radioState = { connected: true, verified: false, frequency: 14074000, mode: 'DATA-USB', model: 'Icom IC-7300', driver: 'Hamlib', txStatus: 'rx' };
+  const capabilities = { simulated: true, ptt: true, pttReadback: true, digitalModes: ['USB', 'DATA-USB'] };
+  const radio = { getState: () => ({ ...radioState }), getCapabilities: () => ({ ...capabilities }) } as unknown as RadioController;
+  const setMode = (mode: string) => { radioState.mode = mode; state = { ...state, mode }; emit(); };
+  const setPtt = (enabled: boolean) => { capabilities.ptt = enabled; emit(); };
   const preparation = deferred(); let preparedCalls = 0, stopCalls = 0;
   const output = { prepare: async () => { preparedCalls++; await preparation.promise; }, stop: () => { stopCalls++; }, start: () => {} } as unknown as TransmitAudioOutput;
   const cleanupBinding = bindFtx({ session, radio, transmit, output, settings: () => settings, notify: message => notes.push(message), arm: async () => setArmed(true), isTransmitting: () => false });
   nodes.get('ftx-encode')!.click(); await settle();
   assert.equal(session.getState().prepared, packet);
-  return { nodes, preparation, setArmed, scheduled, notes, preparedCalls: () => preparedCalls, stopCalls: () => stopCalls, cleanupBinding,
+  return { nodes, preparation, setArmed, setMode, setPtt, scheduled, notes, preparedCalls: () => preparedCalls, stopCalls: () => stopCalls, cleanupBinding,
     cleanup: async () => { cleanupBinding(); await session.dispose(); if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument); else Reflect.deleteProperty(globalThis, 'document'); } };
 }
 
@@ -60,6 +64,31 @@ test('revoking an arm during asyncaudio preparation cancels the old send even af
     fixture.nodes.get('ftx-send')!.click(); await settle();
     assert.equal(fixture.scheduled.length, 1, 'A fresh explicit send is permitted under the new arm.');
     assert.equal(fixture.scheduled[0].durationMs, 12640, 'Scheduling uses active PCM, excluding UTC slot padding.');
+  } finally { await fixture.cleanup(); }
+});
+
+test('FT8 send rejects an unsupported driver audio mode before preparing any output', async () => {
+  const fixture = await setup();
+  try {
+    fixture.setMode('LSB');
+    assert.equal(fixture.nodes.get('ftx-send')!.disabled, true);
+    assert.match(fixture.nodes.get('ftx-transmit-detail')!.textContent, /Icom IC-7300.*LSB.*unavailable.*USB/);
+    fixture.nodes.get('ftx-send')!.click(); await settle();
+    assert.equal(fixture.preparedCalls(), 0); assert.equal(fixture.scheduled.length, 0);
+    assert.ok(fixture.notes.some(note => note.includes('audio mode supported')));
+    fixture.setMode('USB'); assert.equal(fixture.nodes.get('ftx-send')!.disabled, false);
+  } finally { await fixture.cleanup(); }
+});
+
+test('FT8 receive-only driver disables Arm and Send and retains waveform tools', async () => {
+  const fixture = await setup();
+  try {
+    fixture.setPtt(false);
+    assert.equal(fixture.nodes.get('ftx-arm')!.disabled, true);
+    assert.equal(fixture.nodes.get('ftx-send')!.disabled, true);
+    assert.equal(fixture.nodes.get('ftx-download')!.disabled, false);
+    assert.match(fixture.nodes.get('ftx-transmit-detail')!.textContent, /Transmit unavailable.*Receive decoding and waveform exports remain available/);
+    fixture.nodes.get('ftx-send')!.click(); await settle(); assert.equal(fixture.preparedCalls(), 0); assert.equal(fixture.scheduled.length, 0);
   } finally { await fixture.cleanup(); }
 });
 

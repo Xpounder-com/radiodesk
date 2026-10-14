@@ -177,7 +177,7 @@ test('programmatic arming-dialog removal cancels pending arm and late completion
   const restore = globals({ MutationObserver: Observer, FormData: FormDataMock });
   try {
     const transmit = { getState: () => ({ armed }), arm: () => new Promise<void>((resolve) => { completeArm = () => { armed = true; resolve(); }; }), disarm: async () => { armed = false; disarms++; } } as unknown as TransmitController;
-    await openArmDialog({ radio: { getState: () => ({ frequency: 14074000, mode: 'USB', driver: 'simulator' }), getCapabilities: () => ({ simulated: true }) } as unknown as RadioController, transmit, output: { stop() {} } as unknown as TransmitAudioOutput, settings: { call: 'N0CALL', grid: 'EN61', name: '', audioDevice: '', baudRate: 38400, step: 1000 }, dialog: () => modal as unknown as HTMLElement, close: () => { closes++; }, notify() {}, stopOtherAudio() {} });
+    await openArmDialog({ radio: { getState: () => ({ frequency: 14074000, mode: 'USB', driver: 'simulator' }), getCapabilities: () => ({ simulated: true, ptt: true, pttReadback: true }) } as unknown as RadioController, transmit, output: { stop() {} } as unknown as TransmitAudioOutput, settings: { call: 'N0CALL', grid: 'EN61', name: '', audioDevice: '', baudRate: 38400, step: 1000 }, dialog: () => modal as unknown as HTMLElement, close: () => { closes++; }, notify() {}, stopOtherAudio() {} });
     modal.form.dispatchEvent(event('submit')); assert.ok(completeArm); modal.isConnected = false; observed!(); assert.equal(disarms, 1);
     completeArm!(); await flush(); assert.equal(armed, false); assert.equal(disarms, 2); assert.equal(closes, 0);
   } finally { restore(); }
@@ -190,7 +190,7 @@ test('successful arming-dialog close does not cancel the newly completed explici
   const restore = globals({ MutationObserver: Observer, FormData: FormDataMock });
   try {
     const transmit = { getState: () => ({ armed }), arm: async () => { armed = true; }, disarm: async () => { armed = false; disarms++; } } as unknown as TransmitController;
-    await openArmDialog({ radio: { getState: () => ({ frequency: 14074000, mode: 'USB', driver: 'simulator' }), getCapabilities: () => ({ simulated: true }) } as unknown as RadioController, transmit, output: { stop() {} } as unknown as TransmitAudioOutput, settings: { call: 'N0CALL', grid: 'EN61', name: '', audioDevice: '', baudRate: 38400, step: 1000 }, dialog: () => modal as unknown as HTMLElement, close: () => { modal.isConnected = false; observed!(); }, notify() {}, stopOtherAudio() {} });
+    await openArmDialog({ radio: { getState: () => ({ frequency: 14074000, mode: 'USB', driver: 'simulator' }), getCapabilities: () => ({ simulated: true, ptt: true, pttReadback: true }) } as unknown as RadioController, transmit, output: { stop() {} } as unknown as TransmitAudioOutput, settings: { call: 'N0CALL', grid: 'EN61', name: '', audioDevice: '', baudRate: 38400, step: 1000 }, dialog: () => modal as unknown as HTMLElement, close: () => { modal.isConnected = false; observed!(); }, notify() {}, stopOtherAudio() {} });
     modal.form.dispatchEvent(event('submit')); await flush(); assert.equal(armed, true); assert.equal(disarms, 0);
   } finally { restore(); }
 });
@@ -208,7 +208,7 @@ class UiNode {
 }
 
 function uiFixture(): { nodes: Map<string, UiNode>; restore: () => void } {
-  const nodes = new Map(['#tx-status', '#tx-detail', '#ptt-hold', '#receiver-rx', '.footer>span', '[data-action=disarm-transmit]'].map((name) => [name, new UiNode()]));
+  const nodes = new Map(['#tx-status', '#tx-detail', '#ptt-hold', '[data-action=arm-transmit]', '#receiver-rx', '.footer>span', '[data-action=disarm-transmit]'].map((name) => [name, new UiNode()]));
   const topbar = { insertAdjacentElement: (_position: string, node: UiNode) => { nodes.set(`#${node.id}`, node); node.remove = () => { nodes.delete(`#${node.id}`); }; } };
   const restore = globals({ document: { querySelector: (name: string) => name === '.topbar' ? topbar : nodes.get(name) ?? null, querySelectorAll: () => [], createElement: () => new UiNode() } });
   return { nodes, restore };
@@ -219,16 +219,81 @@ const initialTx: TxState = { armed: false, status: 'disarmed', operatorCall: '',
 test('unarmed simulator UI is derived from the actual simulator rather than initial TX defaults', () => {
   const fixture = uiFixture();
   try {
-    updateTransmitUi(initialTx, { getState: () => ({ connected: true, driver: 'simulator', ptt: false, txStatus: 'rx' }), getCapabilities: () => ({ simulated: true }) } as unknown as RadioController);
+    updateTransmitUi(initialTx, { getState: () => ({ connected: true, driver: 'simulator', ptt: false, txStatus: 'rx' }), getCapabilities: () => ({ simulated: true, ptt: true, pttReadback: true }) } as unknown as RadioController);
     assert.match(fixture.nodes.get('#tx-detail')!.textContent, /Simulator.*no physical audio/);
     assert.equal(fixture.nodes.get('#tx-detail')!.textContent.includes('Verify the physical radio'), false); assert.equal(fixture.nodes.has('#global-transmit'), false);
   } finally { fixture.restore(); }
 });
 
+test('a Hamlib dummy model stays visibly simulated before arming', () => {
+  const fixture = uiFixture();
+  try {
+    updateTransmitUi(initialTx, { getState: () => ({ connected: true, driver: 'Hamlib', model: 'Dummy', identitySource: 'hamlib-configured', ptt: false, txStatus: 'rx' }), getCapabilities: () => ({ simulated: true, ptt: true, pttReadback: true }) } as unknown as RadioController);
+    assert.match(fixture.nodes.get('#tx-detail')!.textContent, /Dummy.*Simulator.*no physical audio/);
+    assert.match(fixture.nodes.get('.footer>span')!.innerHTML, /Dummy.*Hamlib/);
+    assert.equal(fixture.nodes.has('#global-transmit'), false);
+  } finally { fixture.restore(); }
+});
+
+test('receive-only Hamlib dummy disables operator arming and explains unavailable transmit control', () => {
+  const fixture = uiFixture();
+  try {
+    updateTransmitUi(initialTx, { getState: () => ({ connected: true, verified: false, driver: 'Hamlib', model: 'Dummy', identitySource: 'hamlib-configured', ptt: false, txStatus: 'rx' }), getCapabilities: () => ({ simulated: true, ptt: false, pttReadback: true }) } as unknown as RadioController);
+    assert.equal(fixture.nodes.get('[data-action=arm-transmit]')!.disabled, true);
+    assert.match(fixture.nodes.get('#tx-detail')!.textContent, /transmit control is disabled.*no physical audio/);
+    assert.equal(fixture.nodes.get('#tx-detail')!.textContent.includes('PTT and timing only'), false);
+  } finally { fixture.restore(); }
+});
+
+test('arming button requires PTT/readback capability, current identity, receive and known simplex', () => {
+  for (const variation of [{ state: { txStatus: 'unknown' } }, { state: { connected: false } }, { state: { verified: false } }, { state: { split: true }, capabilities: { splitReadback: true } }, { state: { split: null }, capabilities: { splitReadback: true } }, { capabilities: { pttReadback: false } }]) {
+    const fixture = uiFixture();
+    try {
+      const actual = { connected: true, verified: true, driver: 'Hamlib', model: 'IC-7300', ptt: false, txStatus: 'rx', split: false, ...variation.state };
+      const capabilities = { simulated: false, ptt: true, pttReadback: true, ...variation.capabilities };
+      updateTransmitUi(initialTx, { getState: () => actual, getCapabilities: () => capabilities } as unknown as RadioController);
+      assert.equal(fixture.nodes.get('[data-action=arm-transmit]')!.disabled, true);
+    } finally { fixture.restore(); }
+  }
+  const fixture = uiFixture();
+  try {
+    updateTransmitUi(initialTx, { getState: () => ({ connected: true, verified: true, driver: 'Hamlib', model: 'IC-7300', ptt: false, txStatus: 'rx', split: false }), getCapabilities: () => ({ simulated: false, ptt: true, pttReadback: true, splitReadback: true }) } as unknown as RadioController);
+    assert.equal(fixture.nodes.get('[data-action=arm-transmit]')!.disabled, false);
+  } finally { fixture.restore(); }
+});
+
+test('generic physical transmit UI names the connected model and driver', () => {
+  const fixture = uiFixture();
+  try {
+    updateTransmitUi(initialTx, { getState: () => ({ connected: true, driver: 'Hamlib', model: 'Icom IC-7300', identitySource: 'hamlib-configured', ptt: false, txStatus: 'rx' }), getCapabilities: () => ({ simulated: false, ptt: true, pttReadback: true }) } as unknown as RadioController);
+    assert.match(fixture.nodes.get('#tx-detail')!.textContent, /Icom IC-7300.*Receive readback confirmed/);
+    assert.match(fixture.nodes.get('.footer>span')!.innerHTML, /Icom IC-7300.*Hamlib/);
+    assert.equal(fixture.nodes.get('#tx-detail')!.textContent.includes('FT-891'), false);
+  } finally { fixture.restore(); }
+});
+
+test('generic arming dialog identifies the configured model and describes model-independent receive release', async () => {
+  const modal = new MockModal(); let title = '', body = '';
+  const transmit = { getState: () => ({ armed: false }), disarm: async () => {} } as unknown as TransmitController;
+  await openArmDialog({ radio: { getState: () => ({ frequency: 14074000, mode: 'USB', driver: 'Hamlib', model: 'Icom IC-7300', identitySource: 'hamlib-configured' }), getCapabilities: () => ({ simulated: false, ptt: true, pttReadback: true }) } as unknown as RadioController, transmit, output: { stop() {} } as unknown as TransmitAudioOutput, settings: { call: 'N0CALL', grid: 'EN61', name: '', audioDevice: '', baudRate: 38400, step: 1000 }, dialog: (dialogTitle, dialogBody) => { title = dialogTitle; body = dialogBody; return modal as unknown as HTMLElement; }, close() {}, notify() {}, stopOtherAudio() {} });
+  assert.equal(title, 'Arm Icom IC-7300 transmit');
+  assert.match(body, /Model selected by the local Hamlib configuration/);
+  assert.match(body, /Emergency RX requests receive through the connected driver/);
+  assert.equal(body.includes('FT-891'), false);
+  assert.equal(body.includes('attempts TX0'), false);
+});
+
+test('a configured radio model is escaped before entering an arming dialog title', async () => {
+  const modal = new MockModal(); let title = '', body = '';
+  const transmit = { getState: () => ({ armed: false }) } as unknown as TransmitController;
+  await openArmDialog({ radio: { getState: () => ({ frequency: 14074000, mode: 'USB', driver: 'Hamlib', model: '<img src=x onerror=alert(1)>', identitySource: 'hamlib-configured' }), getCapabilities: () => ({ simulated: false, ptt: true, pttReadback: true }) } as unknown as RadioController, transmit, output: { stop() {} } as unknown as TransmitAudioOutput, settings: { call: 'N0CALL', grid: 'EN61', name: '', audioDevice: '', baudRate: 38400, step: 1000 }, dialog: (dialogTitle, dialogBody) => { title = dialogTitle; body = dialogBody; return modal as unknown as HTMLElement; }, close() {}, notify() {}, stopOtherAudio() {} });
+  assert.match(title, /&lt;img/); assert.equal(title.includes('<img'), false); assert.equal(body.includes('<img'), false);
+});
+
 test('external transmit remains visible in the global banner even when operator arm is off', () => {
   const fixture = uiFixture();
   try {
-    updateTransmitUi(initialTx, { getState: () => ({ connected: true, driver: 'Yaesu FT-891', ptt: true, txStatus: 'external-tx' }), getCapabilities: () => ({ simulated: false }) } as unknown as RadioController);
+    updateTransmitUi(initialTx, { getState: () => ({ connected: true, driver: 'Yaesu FT-891', ptt: true, txStatus: 'external-tx' }), getCapabilities: () => ({ simulated: false, ptt: true, pttReadback: true }) } as unknown as RadioController);
     assert.match(fixture.nodes.get('#tx-detail')!.textContent, /External radio-local transmit/);
     assert.match(fixture.nodes.get('#global-transmit')!.innerHTML, /EXTERNAL TX.*physical PTT/); assert.match(fixture.nodes.get('#receiver-rx')!.innerHTML, /EXTERNAL TX/);
   } finally { fixture.restore(); }
@@ -237,7 +302,7 @@ test('external transmit remains visible in the global banner even when operator 
 test('lost real-radio state does not turn a stale PTT boolean into confirmed TX or RX', () => {
   const fixture = uiFixture();
   try {
-    updateTransmitUi({ ...initialTx, status: 'fault' }, { getState: () => ({ connected: false, driver: 'none', ptt: true, txStatus: 'unknown' }), getCapabilities: () => ({ simulated: false }) } as unknown as RadioController);
+    updateTransmitUi({ ...initialTx, status: 'fault' }, { getState: () => ({ connected: false, driver: 'none', ptt: true, txStatus: 'unknown' }), getCapabilities: () => ({ simulated: false, ptt: true, pttReadback: true }) } as unknown as RadioController);
     assert.match(fixture.nodes.get('#global-transmit')!.innerHTML, /RX state unconfirmed/);
     assert.match(fixture.nodes.get('#receiver-rx')!.innerHTML, /STATE UNKNOWN/); assert.equal(fixture.nodes.get('#ptt-hold')!.classes.has('transmitting'), false);
     assert.equal(fixture.nodes.get('#global-transmit')!.innerHTML.includes('readback confirmed'), false);

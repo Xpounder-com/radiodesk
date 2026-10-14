@@ -1,10 +1,10 @@
-# RadioDesk 0.2.0 verification
+# RadioDesk 0.3.0 verification
 
-Verified locally on 2026-10-12. Reference hardware targets are the Yaesu FT-891 and RTL-SDR. No physical radio was keyed and no RF transmission was performed.
+Verified locally on 2026-10-13. Direct reference targets are the Yaesu FT-891 and RTL-SDR; additional station control uses Hamlib. No physical radio was opened or keyed and no RF transmission or physical transmit audio was produced. Hamlib 4.7.2 was built from its official release and exercised only with its in-memory Dummy model.
 
 ## Automated checks
 
-`npm run check` passed strict TypeScript, **146 Node tests**, the single HTML build, and the artifact gate. The bridge test runner also executed seven Python standard-library tests.
+`npm run check` passed strict TypeScript, **203 Node tests with no skips**, the single HTML build, and the artifact gate. The bridge runners executed seven RTL-SDR and forty Hamlib Python tests, plus one actual native Hamlib Dummy integration. CI installs Hamlib and enables the native integration with `RADIODESK_HAMLIB_TEST_BINARY`; local runs without that variable skip only the optional native test.
 
 The artifact gate compares all three embedded workers with their actual compiled sources, verifies exact FT8/FT4 WASM bytes and provenance hash, requires eight implemented workspaces, and checks complete dependency notices inside the document head. The release contains one inline script and stylesheet, no external runtime assets and an empty application root.
 
@@ -12,10 +12,17 @@ Behavioral checks include independent recorded FT8/FT4 receive fixtures, 48 kHz 
 
 ## Browser checks
 
-The generated HTML was exercised in the Codex in-app Chromium browser at localhost:
+The earlier modem/SDR flows below were exercised in the Codex in-app Chromium browser. The 0.3.0 Hamlib flows were exercised in Chrome’s neuralint profile at `http://127.0.0.1:4173/`, with the actual Hamlib 4.7.2 Dummy daemon and local bridge:
 
 | Flow | Observed result |
 | --- | --- |
+| Hamlib connection | Configured Dummy model identified and labeled simulated; no automatic arm |
+| Generic tuning and modes | 145.001 MHz and WFM read back from the actual daemon; USB and 14.074 MHz also confirmed |
+| Transmit opt-in | Runtime CAT route, zero daemon cache, simplex and PTT readback accepted; default receive bridge reported transmit unavailable |
+| Final Hamlib FT4 send | Explicit simulator arm, one scheduled send entered CAT TX readback and finished disarmed; daemon returned PTT 0 afterward; no physical audio |
+| Hamlib setup layout | Desktop 1506 × 882 and narrow 390 × 844 viewport; no document horizontal overflow and setup dialog fit within the narrow viewport |
+| Invalid endpoint | Non-loopback unencrypted connection rejected locally; error omitted the access token |
+| Export while connected | Downloaded HTML parsed, kept one inline script/style and empty app root, included the Hamlib client and omitted the connection token |
 | FT8 encode and prepared-WAV decode | `CQ K1ABC FN42`, 79 symbols, 12.64 seconds of active PCM; the loopback result was explicitly labeled |
 | Independent FT8 receive recording | `GJ0KYZ RK9AX MO05` decoded from the unchanged upstream recording |
 | Official independent FT4 recording | Seven verified messages, including `WD9IGY KX1X 73` and `CQ RU W1QA FN32` |
@@ -30,4 +37,4 @@ The generated HTML was exercised in the Codex in-app Chromium browser at localho
 
 ## Remaining verification boundary
 
-Browser and protocol tests do not establish actual FT-891 USB/CAT opening behavior, RF tuning or release, RTL-SDR gain/rate acceptance, sound-card routing, measured modem sensitivity, or on-air audio timing. The native RTL-SDR connection needs `rtl_tcp` and the optional local bridge. Device-level procedures are in [hardware.md](hardware.md), [transmit.md](transmit.md), and [sdr.md](sdr.md). Direct `file:` browser permissions vary; the browser exercises above used localhost.
+Browser and protocol tests do not establish actual FT-891 USB/CAT opening behavior, RF tuning or release, RTL-SDR gain/rate acceptance, sound-card routing, measured modem sensitivity, or on-air audio timing. The native RTL-SDR connection needs `rtl_tcp` and its optional local bridge. Hamlib coverage depends on model capabilities and operator configuration; native Dummy verification does not certify any physical model. Its transmit opt-in changes the shared daemon’s cache to zero during discovery and verifies runtime route/readbacks; backend hardware behavior and measured RF release still require bench evidence. See [Hamlib setup](hamlib.md). Device-level procedures are in [hardware.md](hardware.md), [transmit.md](transmit.md), and [sdr.md](sdr.md). Direct `file:` browser permissions vary; the browser exercises above used localhost.

@@ -17,8 +17,12 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'
+      - name: Install Hamlib for Dummy backend integration
+        run: sudo apt-get update && sudo apt-get install -y libhamlib-utils
       - run: npm ci
       - run: npm run check
+        env:
+          RADIODESK_HAMLIB_TEST_BINARY: rigctld
       - uses: actions/upload-artifact@v4
         with:
           name: radiodesk-standalone

@@ -1,6 +1,6 @@
 {
   "name": "radiodesk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "A single-file open source amateur radio station, wideband SDR receiver, FT8/FT4 modem and RF workbench.",
   "type": "module",
@@ -12,7 +12,7 @@
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build && npm run verify",
     "build:ftx": "node build/build-ftx.mjs",
-    "test:bridge": "python3 -B bridge/test_rtl_tcp_ws.py",
+    "test:bridge": "python3 -B bridge/test_rtl_tcp_ws.py && python3 -B bridge/test_hamlib_ws.py",
     "verify": "node build/verify.mjs"
   },
   "devDependencies": {

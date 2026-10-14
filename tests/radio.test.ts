@@ -243,7 +243,7 @@ test('explicit simulator never claims verified hardware and exposes guarded simu
   await controller.connectSimulator();
   await controller.setFrequency(7_074_000);
   await controller.setMode('LSB');
-  assert.deepEqual(controller.getState(), { frequency: 7_074_000, mode: 'LSB', connected: true, driver: 'simulator', verified: false, ptt: false, txStatus: 'rx', error: undefined });
+  assert.deepEqual(controller.getState(), { frequency: 7_074_000, mode: 'LSB', connected: true, driver: 'simulator', model: 'RadioDesk simulator', backendId: undefined, identitySource: 'simulator', verified: false, ptt: false, txStatus: 'rx', split: null, error: undefined });
   assert.equal(controller.getCapabilities().ptt, true);
   assert.equal(controller.getCapabilities().simulated, true);
   await controller.disconnect();
@@ -312,3 +312,23 @@ test('closing a Web Serial transport releases both stream locks', async () => {
 });
 
 test('simulator supports VHF band memories without claiming FT-891 hardware range',async()=>{const controller=new RadioController({pollIntervalMs:0});await controller.connectSimulator();await controller.setFrequency(144_200_000);assert.equal(controller.getState().frequency,144_200_000);assert.equal(controller.getState().verified,false);await assert.rejects(controller.setFrequency(2_000_000_000));await controller.disconnect();});
+
+for (const next of ['cancel', 'new-connection']) {
+  test(`a simulator switch waiting for an old port close cannot override ${next}`, async () => {
+    const port = new FakePort();
+    const controller = new RadioController({ serial: fakeSerial(port), pollIntervalMs: 0 });
+    await controller.connectSerial('ft891');
+    let finishClose!: () => void;
+    port.close = () => new Promise<void>((resolve) => { finishClose = resolve; });
+    const switching = assert.rejects(controller.connectSimulator(), /canceled/);
+    for (let i = 0; i < 30; i++) await Promise.resolve();
+    assert.equal(typeof finishClose, 'function', 'the old transport close must still be pending');
+    if (next === 'cancel') await controller.disconnect();
+    else await controller.connectSerial('ft891', 38400, new FakePort());
+    finishClose(); await switching;
+    assert.equal(controller.getState().driver, next === 'cancel' ? 'none' : 'Yaesu FT-891');
+    assert.equal(controller.getState().connected, next !== 'cancel');
+    assert.equal(controller.getCapabilities().simulated, false);
+    await controller.disconnect();
+  });
+}

@@ -8,12 +8,12 @@ RadioDesk is a modular TypeScript/C application distributed as one self-containe
 | --- | --- |
 | `src/main.ts` | Service ownership, eight workspace routes, station persistence, receive-source routing, transmit cancellation and app actions. |
 | `src/core/` | Typed events, module metadata and queues for related mutations. |
-| `src/radio/` | Receiver state, named FT-891 codec/driver, transaction serialization, authoritative CAT readbacks, simulator and scoped PTT access. |
+| `src/radio/` | Generic driver contracts and factory registry, FT-891 codec/session, local Hamlib RPC, driver capabilities, simulator and scoped PTT access. |
 | `src/devices/` | Browser capabilities, explicit discovery and selected Web Serial port ownership. |
 | `src/audio/` | Capture/context/worklet lifecycle, mono PCM subscription, WAV playback/recording and RIFF codecs. |
 | `src/dsp/` | Audio FFT/filter references and self-contained analysis worker. |
 | `src/sdr/` | rtl_tcp header/command codec, fragmented U8 IQ, raw/stereo IQ import, complex RF FFT, streaming demodulation, speaker resampling, bounded client and compiled worker. |
-| `bridge/` | Original Python standard-library loopback rtl_tcp-to-WebSocket adapter and framing/security tests. |
+| `bridge/` | Original Python standard-library loopback rtl_tcp and Hamlib WebSocket adapters and framing/security tests. |
 | `src/digital/` | Morse/ITA2 practice, controlled WAV decoder worker and the FT8/FT4 worker/runtime/API. |
 | `src/operating/` | PCM resampling, UTC-slot collection, modem session state, labelled decoded messages and explicit waveform preparation. |
 | `src/transmit/` | Volatile operator arm, bounded hold/scheduled PTT, watchdog/cancellation and confirmed RX state. |
@@ -31,7 +31,7 @@ Mathematical/protocol functions remain usable without a document or attached har
 
 ## Radio ownership and transmit scopes
 
-`RadioController` publishes copies of receiver state: frequency, mode, connection/driver identity, CAT verification and observed PTT. `verified` means a successful protocol identity/state readback; physical testing is a separate claim. The selected serial transport owns its reader/writer locks. FT-891 identity is checked before settings/PTT are enabled. Transactions serialize complete setter/readback operations. A timeout closes the session so a late answer cannot satisfy a later request.
+`RadioController` publishes copies of receiver state: frequency, mode, connection/driver identity, CAT verification and observed PTT. `verified` means fresh identity/state readback under the selected driver. `identitySource` distinguishes direct protocol identification from a configured Hamlib model; physical testing is a separate claim. Driver capabilities govern modes, limits, tuning and supported PTT. The selected serial transport owns its reader/writer locks. FT-891 identity is checked before settings/PTT are enabled. Transactions serialize complete setter/readback operations. A timeout closes the session so a late answer cannot satisfy a later request.
 
 Receive transactions allow state queries and frequency/mode setters. They cannot key transmit. `TransmitController` obtains opaque, connection-bound scopes only after explicit operator arming and fresh confirmed RX. The FT-891 verifies the pinned frequency/mode/TX state again immediately before keying. Scope validity is checked at the actual serialized write; revocation defeats queued key requests. Emergency RX invalidates scopes, prioritizes a bounded `TX0;` request and requires subsequent receive readback. Failed release is reported as RX unconfirmed.
 
@@ -72,7 +72,7 @@ Dropped samples and configuration revisions are exposed. Source/channel changes 
 
 A decode is produced by PCM input and valid upstream checks, not a generated message. Results identify live/imported/loopback sources. Sync score is not SNR; unresolved hashes remain placeholders. Reply composition changes a draft only. Encoding produces an active waveform plus a separately padded full-slot WAV; only the active buffer is scheduled at its protocol start delay. Encoding/import/decoding never key a radio.
 
-Scheduled output requires a prepared packet, deliberate arm, fresh DATA-USB readback for real FT-891 sending, selected/confirmed radio audio route and enough bounded transmit duration. Output preparation precedes scheduling. Stop is idempotent; cancellation prevents a deferred audio start from resurrecting playback. Simulator output does not produce physical audio/RF. See [ftx.md](ftx.md) for protocol scope/independent receive recordings and [transmit.md](transmit.md) for release behavior.
+Scheduled output requires a prepared packet, deliberate arm, fresh readback of a driver-supported digital audio mode, selected/confirmed radio audio route and enough bounded transmit duration. Output preparation precedes scheduling. Stop is idempotent; cancellation prevents a deferred audio start from resurrecting playback. Simulator output does not produce physical audio/RF. See [ftx.md](ftx.md) for protocol scope/independent receive recordings and [transmit.md](transmit.md) for release behavior.
 
 ## Local data and export
 
@@ -97,3 +97,9 @@ The final HTML contains one inline stylesheet/script, an empty app root and comp
 `npm run check` performs strict TypeScript, all Node tests (including the Python bridge runner), build and artifact verification. CI installs Node 24 and Python 3.13 and uploads the verified HTML. Ordinary builds use the checked-in modem binary; rebuilding it uses pinned Emscripten and updates its source/binary manifest. Browser/permission/audio/physical checks remain separate from these automated source/artifact gates.
 
 `npm run dev` binds `127.0.0.1:4173` and rebuilds the same artifact on requests. `PORT` chooses another local port; configure the bridge's exact allowed Origin accordingly. This is local preview infrastructure, not a runtime cloud backend.
+
+## Hamlib station control
+
+The optional Hamlib path connects the same embedded client to a token/exact-Origin guarded local WebSocket bridge. The bridge targets one operator-configured loopback rigctld daemon. A versioned structured protocol returns configured backend identity, discovered capabilities and fresh snapshots. Setters require readbacks; raw commands are unavailable. FT-891 protocol queues/scopes remain inside their direct adapter, while the controller owns connection-bound generic permits and lifecycle cancellation.
+
+Hamlib transmit also requires the startup opt-in, reported PTT setter/readback support, pinned frequency/mode, a bounded lease and periodic client heartbeat. The bridge enforces duration/heartbeat release independently of browser timers and releases on session termination. An upstream timeout invalidates command framing; later replies cannot complete a different operation. Hamlib-reported state is distinct from measured physical RF state. Audio and IQ still use their own sound/SDR paths; rigctld station control does not provide receiver audio by itself. See [hamlib.md](hamlib.md).

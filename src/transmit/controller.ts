@@ -72,6 +72,7 @@ export class TransmitController {
   private watchdog: ReturnType<typeof setTimeout> | undefined;
   private deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   private scheduleTimer: ReturnType<typeof setTimeout> | undefined;
+  private keyTimer: ReturnType<typeof setTimeout> | undefined;
   private audioTimer: ReturnType<typeof setTimeout> | undefined;
   private tailTimer: ReturnType<typeof setTimeout> | undefined;
   private schedule: ScheduledAudioTransmission | undefined;
@@ -83,6 +84,7 @@ export class TransmitController {
   private cleanups: Array<() => void> = [];
   private document: TransmitControllerOptions['document'];
   private disposed = false;
+  private armedIdentity = '';
 
   constructor(radio: RadioController, options: TransmitControllerOptions = {}) {
     this.radio = radio;
@@ -116,12 +118,13 @@ export class TransmitController {
     const call = request.operatorCall.trim().toUpperCase();
     if (!/^[A-Z0-9/]{3,20}$/.test(call) || !/[A-Z]/.test(call) || !/\d/.test(call)) throw new Error('Enter the responsible operator callsign before arming.');
     const maximumSeconds = request.maxTransmitSeconds ?? 10;
-    if (!Number.isFinite(maximumSeconds) || maximumSeconds < 1 || maximumSeconds > 30) throw new RangeError('Maximum transmit duration must be between 1 and 30 seconds.');
+    if (!Number.isSafeInteger(maximumSeconds) || maximumSeconds < 1 || maximumSeconds > 30) throw new RangeError('Maximum transmit duration must be a whole number between 1 and 30 seconds.');
     if (!Number.isSafeInteger(request.frequencyHz) || request.frequencyHz <= 0 || !request.mode) throw new Error('Choose the intended operating frequency and mode.');
     for (const key of ['authorizedOperator', 'frequencyAuthorized', 'antennaOrDummyLoad', 'independentFailsafe', 'audioRouteVerified', 'physicalUnverified'] as const) {
       if (request.acknowledgements?.[key] !== true) throw new Error(`Operator acknowledgement required: ${key}.`);
     }
-    if (!this.radio.getCapabilities().ptt) throw new Error('Connect the explicit simulator or an identified FT-891 before arming.');
+    const capabilities = this.radio.getCapabilities();
+    if (!capabilities.ptt || !capabilities.pttReadback) throw new Error('Connect a radio driver with PTT control and transmit-state readback before arming.');
     const operation = ++this.operation;
     this.armingOperation = operation;
     try {
@@ -129,10 +132,13 @@ export class TransmitController {
       if (operation !== this.operation || this.disposed) throw new Error('Arming was canceled.');
       // Visibility can change without a delivered lifecycle event while CAT is pending.
       if (this.document?.hidden) throw new Error('Arming was canceled because the page became hidden.');
-      if (!actual.connected || (actual.driver !== 'simulator' && (!actual.verified || actual.driver !== 'Yaesu FT-891'))) throw new Error('A recognized, current radio identity and state readback are required.');
+      const currentCapabilities = this.radio.getCapabilities();
+      if (!actual.connected || (!actual.verified && !currentCapabilities.simulated) || !currentCapabilities.ptt || !currentCapabilities.pttReadback) throw new Error('A connected radio with current state readbacks and PTT/readback capabilities is required.');
       if (actual.ptt || actual.txStatus !== 'rx') throw new Error('Confirm receive and release external PTT/VOX/keying before arming.');
+      if (currentCapabilities.splitReadback && actual.split !== false) throw new Error('Confirm simplex before arming; split transmit is not supported.');
       if (actual.frequency !== request.frequencyHz || actual.mode !== request.mode.toUpperCase()) throw new Error('The intended frequency/mode must match the current receiver readback.');
-      this.update({ armed: true, status: 'armed', operatorCall: call, frequencyHz: actual.frequency, mode: actual.mode, maximumSeconds, rxConfirmed: true, scheduledAtUtcMs: null, source: null, error: undefined, simulated: actual.driver === 'simulator' });
+      this.armedIdentity = this.radioIdentity(actual);
+      this.update({ armed: true, status: 'armed', operatorCall: call, frequencyHz: actual.frequency, mode: actual.mode, maximumSeconds, rxConfirmed: true, scheduledAtUtcMs: null, source: null, error: undefined, simulated: currentCapabilities.simulated });
       this.startWatchdog();
     } finally {
       if (this.armingOperation === operation) this.armingOperation = undefined;
@@ -162,7 +168,8 @@ export class TransmitController {
     const leadMs = plan.leadMs ?? 350, tailMs = plan.tailMs ?? 150;
     if (!Number.isFinite(leadMs) || leadMs < 100 || leadMs > 2000 || !Number.isFinite(tailMs) || tailMs < 0 || tailMs > 1000) throw new RangeError('CAT lead must be 100–2000 ms and audio tail 0–1000 ms.');
     if (leadMs + plan.durationMs + tailMs > this.state.maximumSeconds * 1000) throw new Error('Scheduled audio plus CAT lead/tail exceeds the armed transmit time limit.');
-    if (!this.state.simulated && this.state.mode !== 'DATA-USB') throw new Error('Set and confirm DATA-USB on the FT-891 before scheduling digital transmit. No mode or radio menu is changed automatically.');
+    const digitalModes = this.radio.getCapabilities().digitalModes;
+    if (!digitalModes.includes(this.state.mode)) throw new Error(`Confirm a digital audio mode supported by this driver (${digitalModes.join(', ') || 'none'}) before scheduling. No mode or radio menu is changed automatically.`);
     const untilKey = plan.startAtUtcMs - leadMs - this.wallClock();
     if (untilKey < 100 || untilKey > 120_000) throw new Error('Choose a future audio slot with enough CAT lead, within the next two minutes.');
     this.schedule = { ...plan, leadMs, tailMs };
@@ -186,7 +193,8 @@ export class TransmitController {
   private assertArmed(): void {
     if (!this.state.armed || this.disposed || this.document?.hidden) throw new Error('Explicit operator arming is required before transmit.');
     const radio = this.radio.getState();
-    if (!radio.connected || (!this.state.simulated && !radio.verified) || radio.frequency !== this.state.frequencyHz || radio.mode !== this.state.mode) throw new Error('Connection, frequency, or mode changed. Arm again after checking the receiver.');
+    const capabilities = this.radio.getCapabilities();
+    if (!radio.connected || (!radio.verified && !capabilities.simulated) || !capabilities.ptt || !capabilities.pttReadback || (capabilities.splitReadback && radio.split !== false) || capabilities.simulated !== this.state.simulated || this.radioIdentity(radio) !== this.armedIdentity || radio.frequency !== this.state.frequencyHz || radio.mode !== this.state.mode) throw new Error('Connection, radio capabilities, frequency, mode, or split state changed. Arm again after checking the receiver.');
   }
 
   private startDeadline(): void {
@@ -196,15 +204,17 @@ export class TransmitController {
 
   private async key(operation: number): Promise<void> {
     this.assertArmed();
+    const keyBeforeUtcMs = this.schedule ? this.schedule.startAtUtcMs - 75 : undefined;
     this.permit = this.radio.acquireTransmitPermit(() => {
       if (!this.state.armed || operation !== this.operation || this.document?.hidden || this.clock() >= this.deadline) return false;
+      try { this.assertArmed(); } catch { return false; }
       if (this.schedule) {
         try { this.assertScheduleClock(); } catch { return false; }
         // Recheck at the actual serialized TX write, not merely when a slot was queued.
-        if (this.wallClock() > this.schedule.startAtUtcMs - 75) return false;
+        if (keyBeforeUtcMs !== undefined && this.wallClock() >= keyBeforeUtcMs) return false;
       }
       return true;
-    });
+    }, this.state.maximumSeconds, keyBeforeUtcMs);
     try {
       await this.radio.setPtt(true, this.permit);
       if (operation !== this.operation) return;
@@ -222,7 +232,13 @@ export class TransmitController {
     this.assertScheduleClock(); this.assertArmed();
     if (this.wallClock() > plan.startAtUtcMs - 75) throw new Error('The scheduled CAT start was late; this slot was canceled.');
     this.startDeadline(); this.update({ status: 'pending', rxConfirmed: null });
+    const keyTimer = this.setTimer(() => {
+      if (this.keyTimer === keyTimer) this.keyTimer = undefined;
+      if (operation === this.operation && this.state.status === 'pending') void this.emergencyStop('Transmit readback missed the key deadline; this slot was canceled.').catch(() => undefined);
+    }, Math.max(0, plan.startAtUtcMs - 75 - this.wallClock()));
+    this.keyTimer = keyTimer;
     await this.key(operation);
+    if (this.keyTimer === keyTimer) { this.clearTimer(keyTimer); this.keyTimer = undefined; }
     if (operation !== this.operation || !this.schedule) return;
     this.assertScheduleClock();
     const untilAudio = plan.startAtUtcMs - this.wallClock();
@@ -259,8 +275,8 @@ export class TransmitController {
     this.permit = undefined;
     const plan = this.schedule; this.schedule = undefined;
     try { plan?.stopAudio(); } catch { /* Continue radio release even if the audio owner's cleanup fails. */ }
-    for (const timer of [this.deadlineTimer, this.scheduleTimer, this.audioTimer, this.tailTimer]) if (timer !== undefined) this.clearTimer(timer);
-    this.deadlineTimer = this.scheduleTimer = this.audioTimer = this.tailTimer = undefined;
+    for (const timer of [this.deadlineTimer, this.scheduleTimer, this.keyTimer, this.audioTimer, this.tailTimer]) if (timer !== undefined) this.clearTimer(timer);
+    this.deadlineTimer = this.scheduleTimer = this.keyTimer = this.audioTimer = this.tailTimer = undefined;
     this.started = this.deadline = 0;
     if (disarm) { if (this.watchdog !== undefined) this.clearTimer(this.watchdog); this.watchdog = undefined; }
     this.update({ armed: disarm ? false : this.state.armed, status: mayHaveKeyed ? 'releasing' : disarm ? 'disarmed' : this.state.armed ? 'armed' : 'disarmed', scheduledAtUtcMs: null, source: null, error: reason });
@@ -280,13 +296,18 @@ export class TransmitController {
 
   private observeRadio(radio: RadioState): void {
     if (!this.state.armed) return;
-    if (!radio.connected || (!this.state.simulated && !radio.verified) || radio.frequency !== this.state.frequencyHz || radio.mode !== this.state.mode) {
-      void this.emergencyStop('Radio identity, frequency, or mode changed; transmit was disarmed.').catch(() => undefined);
+    const capabilities = this.radio.getCapabilities();
+    if (!radio.connected || (!radio.verified && !capabilities.simulated) || !capabilities.ptt || !capabilities.pttReadback || (capabilities.splitReadback && radio.split !== false) || capabilities.simulated !== this.state.simulated || this.radioIdentity(radio) !== this.armedIdentity || radio.frequency !== this.state.frequencyHz || radio.mode !== this.state.mode) {
+      void this.emergencyStop('Radio identity, capabilities, frequency, mode, or split state changed; transmit was disarmed.').catch(() => undefined);
     } else if (radio.txStatus === 'external-tx' || radio.txStatus === 'unknown') {
       void this.emergencyStop('External or unconfirmed transmit state detected. Release physical PTT/VOX/keying.').catch(() => undefined);
     } else if (radio.txStatus === 'cat-tx' && this.state.status === 'armed') {
       void this.emergencyStop('Unexpected CAT transmit detected while no hold was active.').catch(() => undefined);
     }
+  }
+
+  private radioIdentity(radio: RadioState): string {
+    return JSON.stringify([radio.driver, radio.model, radio.identitySource]);
   }
 
   private startWatchdog(): void {

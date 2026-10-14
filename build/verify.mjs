@@ -41,6 +41,7 @@ function visit(node) {
 visit(ast);
 assert.ok(navigationFound, 'all eight workspaces are wired in navigation');
 for (const id of workspaceIds) assert.ok(cases.has(id), `workspace rendering case is missing: ${id}`);
+assert.ok(strings.has('radiodesk-hamlib-v1'), 'the Hamlib client protocol is embedded in the single HTML');
 
 const wasm = await readFile('wasm/ftx.wasm');
 const wasmBase64 = wasm.toString('base64');
