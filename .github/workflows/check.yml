@@ -2,6 +2,7 @@ name: Check RadioDesk
 on:
   push:
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -23,3 +24,31 @@ jobs:
           name: radiodesk-standalone
           path: dist/radiodesk.html
           if-no-files-found: error
+      - name: Prepare live app
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p pages
+          cp dist/radiodesk.html pages/index.html
+          touch pages/.nojekyll
+      - uses: actions/upload-pages-artifact@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          path: pages
+  deploy:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy live app
+        id: deployment
+        uses: actions/deploy-pages@v4
