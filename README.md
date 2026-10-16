@@ -2,7 +2,7 @@
 
 **An open source amateur radio workspace. One self-contained HTML file.**
 
-**[Open the live app](https://xpounder-com.github.io/radiodesk/) · [Download standalone HTML](https://github.com/Xpounder-com/radiodesk/releases/latest/download/radiodesk.html)**
+**[Open the live app](https://mehrdadxzaker.github.io/radiodesk/) · [Download standalone HTML](https://github.com/mehrdadxzaker/radiodesk/releases/latest/download/radiodesk.html)**
 
 RadioDesk combines station control, wideband SDR reception, receiver audio analysis, a real FT8/FT4 modem, RF engineering tools, a local logbook and an offline world path map. Source modules stay readable TypeScript and C; the distribution embeds the application, styles, workers, modem WebAssembly, map data and dependency notices.
 
@@ -10,7 +10,7 @@ There is no account, cloud backend, analytics or runtime CDN. Simulated, importe
 
 ## Use it
 
-Use the [live HTTPS app](https://xpounder-com.github.io/radiodesk/), or [download `radiodesk.html`](https://github.com/Xpounder-com/radiodesk/releases/latest/download/radiodesk.html) and open the saved file in a modern browser. Both contain the complete application. RF calculations, the map, logging, synthetic signal practice, IQ/WAV imports and FT8/FT4 encoding/decoding run locally. Browser storage and hardware permissions vary for `file:` origins; export logs and JSON backups for portability. The built artifact is also available at [`dist/radiodesk.html`](dist/radiodesk.html).
+Use the [live HTTPS app](https://mehrdadxzaker.github.io/radiodesk/), or [download `radiodesk.html`](https://github.com/mehrdadxzaker/radiodesk/releases/latest/download/radiodesk.html) and open the saved file in a modern browser. Both contain the complete application. RF calculations, the map, logging, synthetic signal practice, IQ/WAV imports and FT8/FT4 encoding/decoding run locally. Browser storage and hardware permissions vary for `file:` origins; export logs and JSON backups for portability. The built artifact is also available at [`dist/radiodesk.html`](dist/radiodesk.html).
 
 For microphone capture and Web Serial, use localhost or HTTPS in a supporting browser:
 
@@ -21,7 +21,7 @@ npm run dev
 
 Open **http://127.0.0.1:4173**. This launcher rebuilds the same HTML on page load. It is for local preview; offline tools do not depend on a running server.
 
-For radios supported by Hamlib, use the [local bridge helper](https://github.com/Xpounder-com/radiodesk/releases/latest/download/hamlib_ws.py), install the verified Hamlib 4.7.2 separately, select the exact model with `rigctld -l`, and start its daemon bound to loopback:
+For radios supported by Hamlib, use the [local bridge helper](https://github.com/mehrdadxzaker/radiodesk/releases/latest/download/hamlib_ws.py), install the verified Hamlib 4.7.2 separately, select the exact model with `rigctld -l`, and start its daemon bound to loopback:
 
 ```sh
 rigctld -m YOUR_MODEL_ID -r YOUR_CAT_DEVICE -P RIG -C cache_timeout=0 -T 127.0.0.1 -t 4532
@@ -39,7 +39,7 @@ python3 bridge/rtl_tcp_ws.py
 
 Paste the complete token-bearing WebSocket endpoint printed by the bridge into **SDR**. When opening the HTML directly from disk, start the bridge with `--allow-file-origin`. See [SDR setup](docs/sdr.md) for origins, controls, sample-rate bounds and source limits. The client and DSP remain inside the HTML; native `rtl_tcp` and the bridge provide the hardware connection.
 
-For the hosted app, explicitly allow its origin when starting your local bridge: `python3 bridge/rtl_tcp_ws.py --origin https://xpounder-com.github.io`. The bridge stays bound to local loopback; the public website cannot access a radio without your device connection and permissions.
+For the hosted app, explicitly allow its origin when starting your local bridge: `python3 bridge/rtl_tcp_ws.py --origin https://mehrdadxzaker.github.io`. The bridge stays bound to local loopback; the public website cannot access a radio without your device connection and permissions.
 
 ## Eight workspaces
 
@@ -98,3 +98,5 @@ Useful separate commands are `npm run test:bridge`, `npm run verify` after a bui
 Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture](docs/architecture.md), [SDR](docs/sdr.md), [Hamlib](docs/hamlib.md), [FT8/FT4](docs/ftx.md), [transmit](docs/transmit.md), [signals](docs/signals.md) and [engineering](docs/engineering.md). Preserve the single-file build, source labels, explicit control paths and inspectable test evidence. Additional named radios/modems, rotators, calibrated instruments, propagation models and electromagnetic solvers can extend these boundaries.
 
 RadioDesk application and original bridge code use [MIT](LICENSE). The embedded `ft8_lib` is MIT, KISS FFT is BSD-3-Clause, and Emscripten/musl/math notices are retained in source and in the HTML. Natural Earth data is public domain. Optional native Osmocom `rtl-sdr` and Hamlib retain their own licenses and are not copied into the client or original MIT bridge. Hamlib is installed separately; no Hamlib source or binary is embedded in the HTML. The independent WSJT-X test recording has separate upstream provenance and a retained GPL notice; it is excluded from the HTML. See [FTX provenance](docs/ftx.md), [fixture provenance](vendor/ft8_lib/UPSTREAM.md) and [map provenance](docs/source-data.md).
+
+Planned GitHub ownership change: see [transfer preparation](docs/PERSONAL_TRANSFER.md).

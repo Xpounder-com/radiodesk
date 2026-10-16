@@ -40,13 +40,13 @@ The bridge needs Python 3.10 or newer and no third-party Python packages. Its co
 The default origins are `http://127.0.0.1:4173` and `http://localhost:4173`. For the hosted app, permit its origin without the repository path:
 
 ```sh
-python3 bridge/hamlib_ws.py --origin https://xpounder-com.github.io
+python3 bridge/hamlib_ws.py --origin https://mehrdadxzaker.github.io
 ```
 
 To permit the hosted app and the local development server together:
 
 ```sh
-python3 bridge/hamlib_ws.py --origin https://xpounder-com.github.io --origin http://127.0.0.1:4173 --origin http://localhost:4173
+python3 bridge/hamlib_ws.py --origin https://mehrdadxzaker.github.io --origin http://127.0.0.1:4173 --origin http://localhost:4173
 ```
 
 For a downloaded file, add `--allow-file-origin`. Browser mixed-content and local-network policies differ; if a hosted page cannot reach the loopback bridge, serve the HTML locally or use an operator-managed authenticated WSS adapter. The included bridge provides plain loopback WebSocket service, not TLS.
